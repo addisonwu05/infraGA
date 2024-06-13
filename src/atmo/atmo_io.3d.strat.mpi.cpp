@@ -12,8 +12,10 @@
 
 #include "atmo_state.h"
 #include "atmo_io.3d.strat.h"
+
 #include "../util/interpolation.h"
 #include "../util/fileIO.h"
+
 #include "../geoac/geoac.params.h"
 
 using namespace std;
@@ -58,6 +60,9 @@ int set_region(char* atmo_file, char* atmo_format, bool invert_winds, int rank){
     int result = 1;
     if(rank == 0){
         cout << "Interpolating atmosphere data in '" << atmo_file << "' using format '" << atmo_format << "'..." << '\n';
+        if(invert_winds){
+            cout << '\t' << "Inverting wind fields for back projection analysis..." << '\n';
+        }
     
         interp::prep(atmo::c_spline,    file_length(atmo_file));
         interp::prep(atmo::u_spline,    atmo::c_spline.length);
@@ -188,6 +193,10 @@ int set_region(char* atmo_file, char* topo_file, char* atmo_format, bool invert_
     int result;
     if(rank == 0){
         cout << "Interpolating atmosphere data in '" << atmo_file << "' and topography data in '" << topo_file << "'..." << '\n';
+        if(invert_winds){
+            cout << '\t' << "Inverting wind fields for back projection analysis..." << '\n';
+        }
+        
         int n1, n2;
         ifstream file_in;
     

@@ -1,15 +1,7 @@
 #!/usr/bin/env python
-from email.policy import default
-import sys
-
-import os
 import click
 
-import numpy as np 
-
 from . import run_infraga
-from . import multipath_wvfrm as mltwvfrm
-
 from . import plotting
 from . import utils as infraga_utils
 
@@ -86,16 +78,20 @@ run_sph.add_command(run_infraga.run_sph_prop)
 run_sph.add_command(run_infraga.run_sph_eig)
 run_sph.add_command(run_infraga.run_sph_wvfrm)
 run_sph.add_command(run_infraga.run_sph_eig_wvfrm)
+run_sph.add_command(run_infraga.run_sph_supersonic)
 
 plot.add_command(plotting.plot_atmo)
 plot.add_command(plotting.plot_azimuthal)
 plot.add_command(plotting.plot_eigenrays)
 plot.add_command(plotting.plot_eig_wvfrm)
 plot.add_command(plotting.plot_map)
+plot.add_command(plotting.plot_animation)
     
 utils.add_command(infraga_utils.build_g2s_grid)
 utils.add_command(infraga_utils.extract_ecmwf)
 utils.add_command(infraga_utils.extract_terrain)
+utils.add_command(infraga_utils.nearby_arrivals)
+
 
 if __name__ == '__main__':
     main()

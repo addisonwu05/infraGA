@@ -170,6 +170,7 @@ void usage(){
     cout << '\t' << "z_grnd"            << '\t' << '\t' << '\t' << "km"         << '\t' << '\t' << "0.0" << '\n';
     cout << '\t' << "write_atmo"        << '\t' << '\t' << "true/false"         << '\t' << "False" << '\n';
     cout << '\t' << "prof_format"   	<< '\t' << '\t' << "see manual"         << '\t' << "zTuvdp" << '\n';
+    cout << '\t' << "reverse_winds"     << '\t' << '\t' << "true/false"         << '\t' << "false" << '\n';
     cout << '\t' << "output_id"         << '\t' << '\t' << "see manual"         << '\t' << "from profile.met" << '\n';
     cout << '\t' << "write_caustics"    << '\t' << '\t' << "true/false"         << '\t' << "false" << '\n';
     cout << '\t' << "calc_amp"          << '\t' << '\t' << "true/false"         << '\t' << "true" << '\n';
@@ -212,7 +213,7 @@ void run_prop(char* inputs[], int count){
     double phi_min = -90.0, phi_max = -90.0, phi_step = 1.0;
     int bounces = 2, file_check;
     double  lat_src, lon_src, z_src = 0.0;
-    bool write_atmo = false, write_rays = true, write_caustics = false, write_topo=false, custom_output_id=false, print_resid=false;
+    bool write_atmo = false, write_rays = true, write_caustics = false, write_topo=false, custom_output_id=false, print_resid=false, reverse_winds=false;
     double freq = 0.1, turn_ht_min = 0.2;
     char* prof_format = "zTuvdp";
     char* topo_file = "None";
@@ -226,13 +227,14 @@ void run_prop(char* inputs[], int count){
     geoac::is_topo = false;
     
     for(int i = 5; i < count; i++){
-        if (strncmp(inputs[i], "prof_format=", 12) == 0){       prof_format = inputs[i] + 12;}
-        else if (strncmp(inputs[i], "z_grnd=", 7) == 0){        topo::z0 = atof(inputs[i] + 7);}
-        else if (strncmp(inputs[i], "topo_file=", 10) == 0){    topo_file = inputs[i] + 10; geoac::is_topo=true;}
+        if (strncmp(inputs[i], "prof_format=", 12) == 0){           prof_format = inputs[i] + 12;}
+        else if (strncmp(inputs[i], "z_grnd=", 7) == 0){            topo::z0 = atof(inputs[i] + 7);}
+        else if (strncmp(inputs[i], "reverse_winds=", 14) == 0){    reverse_winds = string2bool(inputs[i] + 14);}
+        else if (strncmp(inputs[i], "topo_file=", 10) == 0){        topo_file = inputs[i] + 10; geoac::is_topo=true;}
     }
     
-    if (geoac::is_topo){    file_check = set_region(inputs[2], inputs[3], inputs[4], topo_file, prof_format, false);}
-    else{                   file_check = set_region(inputs[2], inputs[3], inputs[4], prof_format, false);}
+    if (geoac::is_topo){    file_check = set_region(inputs[2], inputs[3], inputs[4], topo_file, prof_format, reverse_winds);}
+    else{                   file_check = set_region(inputs[2], inputs[3], inputs[4], prof_format, reverse_winds);}
     if(!file_check){
         return;
     }
@@ -285,6 +287,8 @@ void run_prop(char* inputs[], int count){
 
         else if (strncmp(inputs[i], "write_atmo=", 11) == 0){                                               write_atmo = string2bool(inputs[i] + 11);}
         else if (strncmp(inputs[i], "prof_format=", 12) == 0){ 		                                        prof_format = inputs[i] + 12;}
+        else if (strncmp(inputs[i], "reverse_winds=", 14) == 0){                                            reverse_winds = string2bool(inputs[i] + 14);}
+
         else if (strncmp(inputs[i], "output_id=", 10) == 0){                                                custom_output_id = true; 
                                                                                                             output_id = inputs[i] + 10;}
         else if (strncmp(inputs[i], "z_grnd=", 7) == 0){                                                    if(!geoac::is_topo){
@@ -689,6 +693,9 @@ void run_back_proj(char* inputs[], int count){
     projection << '\t' << "LON^{(az)} [-]";
     projection << '\t' << "Z^{(az)} [km/deg]";
     projection << '\t' << "T^{(az)} [s/deg]";
+    projection << '\t' << "c_{g,lat} [m/s]";
+    projection << '\t' << "c_{g,lon} [m/s]";
+    projection << '\t' << "c_{g,r} [m/s]";
     projection << '\n';
     
     double** solution;
@@ -715,13 +722,22 @@ void run_back_proj(char* inputs[], int count){
                 
                 projection << '\t' << setprecision(8) << solution[m][7];
                 projection << '\t' << setprecision(8) << solution[m][8];
-                projection << '\t' << solution[m][6]*  (Pi / 180.0);
+                projection << '\t' << solution[m][6] * (Pi / 180.0);
                 projection << '\t' << travel_time_var_incl * (Pi / 180.0);
 
                 projection << '\t' << setprecision(8) << solution[m][13];
                 projection << '\t' << setprecision(8) << solution[m][14];
                 projection << '\t' << solution[m][12] * (Pi / 180.0);
                 projection << '\t' << travel_time_var_az  * (Pi / 180.0);
+
+                double nu[3] = {solution[m][3], solution[m][4], solution[m][5]};
+                double nu_mag = sqrt(pow(nu[0], 2) + pow(nu[1], 2) + pow(nu[2], 2));
+
+                double c_val = atmo::c(solution[m][0], solution[m][1], solution[m][2]);
+
+                projection << '\t' << c_val * nu[1] / nu_mag + atmo::u(solution[m][0], solution[m][1], solution[m][2]);
+                projection << '\t' << c_val * nu[2] / nu_mag + atmo::v(solution[m][0], solution[m][1], solution[m][2]);
+                projection << '\t' << c_val * nu[0] / nu_mag + atmo::w(solution[m][0], solution[m][1], solution[m][2]);
 
                 projection << '\n';
             }
@@ -773,7 +789,7 @@ void run_eig_search(char* inputs[], int count){
     char* topo_file = "None";
     char* output_id;
     char input_check;
-    bool write_atmo = false, custom_output_id=false;    
+    bool write_atmo = false, custom_output_id=false, reverse_winds=false;
 
     topo::z0 = 0.0;
     atmo::tweak_abs = 1.0;
@@ -782,13 +798,14 @@ void run_eig_search(char* inputs[], int count){
     geoac::verbose = false;
 
     for(int i = 5; i < count; i++){
-        if (strncmp(inputs[i], "prof_format=", 12) == 0){       prof_format = inputs[i] + 12;}
-        else if (strncmp(inputs[i], "z_grnd=", 7) == 0){        topo::z0 = atof(inputs[i] + 7);}
-        else if (strncmp(inputs[i], "topo_file=", 10) == 0){    topo_file = inputs[i] + 10; geoac::is_topo=true;}
+        if (strncmp(inputs[i], "prof_format=", 12) == 0){           prof_format = inputs[i] + 12;}
+        else if (strncmp(inputs[i], "z_grnd=", 7) == 0){            topo::z0 = atof(inputs[i] + 7);}
+        else if (strncmp(inputs[i], "reverse_winds=", 14) == 0){    reverse_winds = string2bool(inputs[i] + 14);}
+        else if (strncmp(inputs[i], "topo_file=", 10) == 0){        topo_file = inputs[i] + 10; geoac::is_topo=true;}
     }
     
-    if (geoac::is_topo){    file_check = set_region(inputs[2], inputs[3], inputs[4], topo_file, prof_format, false);}
-    else{                   file_check = set_region(inputs[2], inputs[3], inputs[4], prof_format, false);}
+    if (geoac::is_topo){    file_check = set_region(inputs[2], inputs[3], inputs[4], topo_file, prof_format, reverse_winds);}
+    else{                   file_check = set_region(inputs[2], inputs[3], inputs[4], prof_format, reverse_winds);}
     if(!file_check){
         return;
     }
@@ -956,8 +973,8 @@ void run_eig_direct(char* inputs[], int count){
     char* topo_file = "None";
     char* output_id;
     char input_check;
-    bool write_atmo = false, custom_output_id=false;    
-    
+    bool write_atmo = false, custom_output_id=false, reverse_winds=false;
+
     topo::z0 = 0.0;
     atmo::tweak_abs = 1.0;
     
@@ -965,13 +982,14 @@ void run_eig_direct(char* inputs[], int count){
     geoac::verbose = false;
     
     for(int i = 5; i < count; i++){
-        if (strncmp(inputs[i], "prof_format=", 12) == 0){       prof_format = inputs[i] + 12;}
-        else if (strncmp(inputs[i], "z_grnd=", 7) == 0){        topo::z0 = atof(inputs[i] + 7);}
-        else if (strncmp(inputs[i], "topo_file=", 10) == 0){    topo_file = inputs[i] + 10; geoac::is_topo=true;}
+        if (strncmp(inputs[i], "prof_format=", 12) == 0){           prof_format = inputs[i] + 12;}
+        else if (strncmp(inputs[i], "z_grnd=", 7) == 0){            topo::z0 = atof(inputs[i] + 7);}
+        else if (strncmp(inputs[i], "reverse_winds=", 14) == 0){    reverse_winds = string2bool(inputs[i] + 14);}
+        else if (strncmp(inputs[i], "topo_file=", 10) == 0){        topo_file = inputs[i] + 10; geoac::is_topo=true;}
     }
     
-    if (geoac::is_topo){    file_check = set_region(inputs[2], inputs[3], inputs[4], topo_file, prof_format, false);}
-    else{                   file_check = set_region(inputs[2], inputs[3], inputs[4], prof_format, false);}
+    if (geoac::is_topo){    file_check = set_region(inputs[2], inputs[3], inputs[4], topo_file, prof_format, reverse_winds);}
+    else{                   file_check = set_region(inputs[2], inputs[3], inputs[4], prof_format, reverse_winds);}
     if(!file_check){
         return;
     }
@@ -1015,6 +1033,8 @@ void run_eig_direct(char* inputs[], int count){
 
         else if (strncmp(inputs[i], "write_atmo=", 11) == 0){                                               write_atmo = string2bool(inputs[i] + 11);}
         else if (strncmp(inputs[i], "prof_format=", 12) == 0){                                              prof_format = inputs[i] + 12;}
+        else if (strncmp(inputs[i], "reverse_winds=", 14) == 0){                                            reverse_winds = string2bool(inputs[i] + 14);}
+
         else if (strncmp(inputs[i], "output_id=", 10) == 0){                                                custom_output_id = true; 
                                                                                                             output_id = inputs[i] + 10;}
         else if (strncmp(inputs[i], "z_grnd=", 7) == 0){                                                    if(!geoac::is_topo){
@@ -1081,7 +1101,7 @@ void run_wnl_wvfrm(char* inputs[], int count){
     char input_check;
     double freq = 0.1, D, D_prev;
     int bounces = 0, file_check;
-    bool write_atmo = false, write_rays=false, custom_output_id=false;
+    bool write_atmo = false, write_rays=false, custom_output_id=false, start_wvfrm=false, reverse_winds=false;
 
     double wvfrm_ref=1.0, wvfrm_out_step=1.0e10;
     double ray_length, c0, nu0, cg0r, cg0th, cg0ph, cg0, rho0, D0, p0;
@@ -1102,13 +1122,14 @@ void run_wnl_wvfrm(char* inputs[], int count){
     geoac::phi = Pi / 2.0 - 90.0 * (Pi / 180.0);
 
     for(int i = 5; i < count; i++){
-        if (strncmp(inputs[i], "prof_format=", 12) == 0){       prof_format = inputs[i] + 12;}
-        else if (strncmp(inputs[i], "z_grnd=", 7) == 0){        topo::z0 = atof(inputs[i] + 7);}
-        else if (strncmp(inputs[i], "topo_file=", 10) == 0){    topo_file = inputs[i] + 10; geoac::is_topo=true;}
+        if (strncmp(inputs[i], "prof_format=", 12) == 0){           prof_format = inputs[i] + 12;}
+        else if (strncmp(inputs[i], "z_grnd=", 7) == 0){            topo::z0 = atof(inputs[i] + 7);}
+        else if (strncmp(inputs[i], "reverse_winds=", 14) == 0){    reverse_winds = string2bool(inputs[i] + 14);}
+        else if (strncmp(inputs[i], "topo_file=", 10) == 0){        topo_file = inputs[i] + 10; geoac::is_topo=true;}
     }
     
-    if (geoac::is_topo){    file_check = set_region(inputs[2], inputs[3], inputs[4], topo_file, prof_format, false);}
-    else{                   file_check = set_region(inputs[2], inputs[3], inputs[4], prof_format, false);}
+    if (geoac::is_topo){    file_check = set_region(inputs[2], inputs[3], inputs[4], topo_file, prof_format, reverse_winds);}
+    else{                   file_check = set_region(inputs[2], inputs[3], inputs[4], prof_format, reverse_winds);}
     if(!file_check){
         return;
     }
@@ -1165,6 +1186,8 @@ void run_wnl_wvfrm(char* inputs[], int count){
 
         else if (strncmp(inputs[i], "write_atmo=", 11) == 0){                                               write_atmo = string2bool(inputs[i] + 11);}
         else if (strncmp(inputs[i], "prof_format=", 12) == 0){                                              prof_format = inputs[i] + 12;}
+        else if (strncmp(inputs[i], "reverse_winds=", 14) == 0){                                            reverse_winds = string2bool(inputs[i] + 14);}
+
         else if (strncmp(inputs[i], "output_id=", 10) == 0){                                                custom_output_id = true; 
                                                                                                             output_id = inputs[i] + 10;}
         else if (strncmp(inputs[i], "z_grnd=", 7) == 0){                                                    if(!geoac::is_topo){
@@ -1236,7 +1259,9 @@ void run_wnl_wvfrm(char* inputs[], int count){
     travel_time_sum = 0.0;
     attenuation = 0.0;
     r_max = 0.0;
-		
+
+    ray_length = 0.0;
+
     for(int bnc_cnt = 0; bnc_cnt <= bounces; bnc_cnt++){
         k = geoac::prop_rk4(solution, break_check, length);
 
@@ -1255,38 +1280,44 @@ void run_wnl_wvfrm(char* inputs[], int count){
                 raypath << '\n';
             }
         }
-        if(bnc_cnt == 0){
-            wvfrm_ref_k = 0;
-            ray_length = 0.0;
+        if(!start_wvfrm){
             for(wvfrm_ref_k = 0; wvfrm_ref_k < k; wvfrm_ref_k++){
-                ray_length += sqrt(pow(solution[wvfrm_ref_k + 1][0] - solution[wvfrm_ref_k][0], 2) + pow(solution[wvfrm_ref_k + 1][1] - solution[wvfrm_ref_k][1], 2));
-                if (ray_length >= wvfrm_ref) break;
+                double dr, dt, dp, ds, r, t;
+            
+                dr = solution[wvfrm_ref_k + 1][0] - solution[wvfrm_ref_k][0];   r = solution[wvfrm_ref_k][0] + dr / 2.0;
+                dt = solution[wvfrm_ref_k + 1][1] - solution[wvfrm_ref_k][1];   t = solution[wvfrm_ref_k][1] + dt / 2.0;
+                dp = solution[wvfrm_ref_k + 1][2] - solution[wvfrm_ref_k][2];
+            
+                ray_length += sqrt(pow(dr, 2) + pow(r * dt, 2) + pow(r * cos(t) * dp, 2));
+                if (ray_length >= wvfrm_ref){
+                    c0 = atmo::c(solution[wvfrm_ref_k + 1][0], solution[wvfrm_ref_k + 1][1], solution[wvfrm_ref_k + 1][2]);
+                    rho0 = atmo::rho(solution[wvfrm_ref_k + 1][0], solution[wvfrm_ref_k + 1][1], solution[wvfrm_ref_k + 1][2]);
+
+                    nu0 = sqrt(pow(solution[wvfrm_ref_k + 1][3], 2) + pow(solution[wvfrm_ref_k + 1][4], 2) + pow(solution[wvfrm_ref_k + 1][5], 2));
+                    cg0r  = c0 * solution[wvfrm_ref_k + 1][3] / nu0 + atmo::w(solution[wvfrm_ref_k + 1][0], solution[wvfrm_ref_k + 1][1], solution[wvfrm_ref_k + 1][2]);
+                    cg0th = c0 * solution[wvfrm_ref_k + 1][4] / nu0 + atmo::v(solution[wvfrm_ref_k + 1][0], solution[wvfrm_ref_k + 1][1], solution[wvfrm_ref_k + 1][2]);
+                    cg0ph = c0 * solution[wvfrm_ref_k + 1][5] / nu0 + atmo::u(solution[wvfrm_ref_k + 1][0], solution[wvfrm_ref_k + 1][1], solution[wvfrm_ref_k + 1][2]);
+                    cg0 = sqrt(pow(cg0r, 2) + pow(cg0th, 2) + pow(cg0ph, 2));
+
+                    D0 = geoac::jacobian(solution, wvfrm_ref_k + 1);
+
+                    sprintf(output_buffer, "%s.wvfrm_init.dat", output_id);
+                    wvfrm_out.open(output_buffer);
+                    wvfrm_out << "# t [sec]" << '\t' << "p(t) [Pa]" << '\n';
+                    for (int n = 0; n < wvfrm::len; n++){
+                        wvfrm_out << setprecision(8) << geoac::travel_time(solution, wvfrm_ref_k + 1) + wvfrm_array[n][0] << '\t' << wvfrm_array[n][1] << '\n';
+                    }
+                    wvfrm_out.close();
+            
+                    p0 = 0.0;
+                    for (int n = 0; n < wvfrm::len; n++){    p0 = max(p0, fabs(wvfrm_array[n][1]));}
+                    for (int n = 0; n < wvfrm::len; n++){    wvfrm_array[n][1] /= p0;}
+                    start_wvfrm = true;
+
+                    ray_length = geoac::wnl_wvfrm(solution, wvfrm_array, wvfrm_ref_k + 1, k, wvfrm_ref, c0, cg0, nu0, rho0, D0, p0, wvfrm_out_step);
+                    break;
+                }
             }
-
-            c0 = atmo::c(solution[wvfrm_ref_k + 1][0], solution[wvfrm_ref_k + 1][1], solution[wvfrm_ref_k + 1][2]);
-            rho0 = atmo::rho(solution[wvfrm_ref_k + 1][0], solution[wvfrm_ref_k + 1][1], solution[wvfrm_ref_k + 1][2]);
-
-            nu0 = sqrt(pow(solution[wvfrm_ref_k + 1][3], 2) + pow(solution[wvfrm_ref_k + 1][4], 2) + pow(solution[wvfrm_ref_k + 1][5], 2));
-            cg0r  = c0 * solution[wvfrm_ref_k + 1][3] / nu0 + atmo::w(solution[wvfrm_ref_k + 1][0], solution[wvfrm_ref_k + 1][1], solution[wvfrm_ref_k + 1][2]);
-            cg0th = c0 * solution[wvfrm_ref_k + 1][4] / nu0 + atmo::v(solution[wvfrm_ref_k + 1][0], solution[wvfrm_ref_k + 1][1], solution[wvfrm_ref_k + 1][2]);
-            cg0ph = c0 * solution[wvfrm_ref_k + 1][5] / nu0 + atmo::u(solution[wvfrm_ref_k + 1][0], solution[wvfrm_ref_k + 1][1], solution[wvfrm_ref_k + 1][2]);
-            cg0 = sqrt(pow(cg0r, 2) + pow(cg0th, 2) + pow(cg0ph, 2));
-
-            D0 = geoac::jacobian(solution, wvfrm_ref_k + 1);
-
-           sprintf(output_buffer, "%s.wvfrm_init.dat", output_id);
-            wvfrm_out.open(output_buffer);
-            wvfrm_out << "# t [sec]" << '\t' << "p(t) [Pa]" << '\n';
-            for (int n = 0; n < wvfrm::len; n++){
-                wvfrm_out << setprecision(8) << geoac::travel_time(solution, wvfrm_ref_k + 1) + wvfrm_array[n][0] << '\t' << wvfrm_array[n][1] << '\n';
-            }
-            wvfrm_out.close();
-    
-            p0 = 0.0;
-            for (int n = 0; n < wvfrm::len; n++){    p0 = max(p0, fabs(wvfrm_array[n][1]));}
-            for (int n = 0; n < wvfrm::len; n++){    wvfrm_array[n][1] /= p0;}
-
-            ray_length = geoac::wnl_wvfrm(solution, wvfrm_array, wvfrm_ref_k + 1, k, 0.0, c0, cg0, nu0, rho0, D0, p0, wvfrm_out_step);
         } else {
             ray_length += geoac::wnl_wvfrm(solution, wvfrm_array, 0, k, ray_length, c0, cg0, nu0, rho0, D0, p0, wvfrm_out_step);
         }
@@ -1368,6 +1399,300 @@ void run_wnl_wvfrm(char* inputs[], int count){
     geoac::delete_solution(solution, length);
     clear_region();
 }
+
+
+void run_mach_cone(char* inputs[], int count){
+    cout << '\n';
+    cout << '\t' << "############################################" << '\n';
+    cout << '\t' << "####     Running infraga-sph-rngdep     ####" << '\n';
+    cout << '\t' << "####       Mach Cone Source Model       ####" << '\n';
+    cout << '\t' << "############################################" << '\n' << '\n';
+
+    double lat_src, lon_src, z_src = 0.0;
+    double src_M = 2.0, src_attack = 0.0, src_az = 0.0, cone_resol = 2.0;
+    double freq = 0.1;
+
+    int bounces = 10, file_check;
+
+    bool write_atmo = false, write_rays = true, custom_output_id=false, print_resid=false;
+
+    char* prof_format = "zTuvdp";
+    char* topo_file = "None";
+    char* output_id;
+    char input_check;
+
+    topo::z0 = 0.0;
+    atmo::tweak_abs = 1.0;
+    
+    geoac::calc_amp = true;
+    geoac::is_topo = false;
+    
+    for(int i = 5; i < count; i++){
+        if (strncmp(inputs[i], "prof_format=", 12) == 0){       prof_format = inputs[i] + 12;}
+        else if (strncmp(inputs[i], "z_grnd=", 7) == 0){        topo::z0 = atof(inputs[i] + 7);}
+        else if (strncmp(inputs[i], "topo_file=", 10) == 0){    topo_file = inputs[i] + 10; geoac::is_topo=true;}
+    }
+    
+    if (geoac::is_topo){    file_check = set_region(inputs[2], inputs[3], inputs[4], topo_file, prof_format, false);}
+    else{                   file_check = set_region(inputs[2], inputs[3], inputs[4], prof_format, false);}
+    if(!file_check){
+        return;
+    }
+
+    lat_src = (geoac::lat_max + geoac::lat_min) / 2.0 * (180.0 / Pi);
+    lon_src = (geoac::lon_max + geoac::lon_min) / 2.0 * (180.0 / Pi);
+    
+    for(int i = 5; i < count; i++){
+        if ((strncmp(inputs[i], "src_alt=", 8) == 0) || (strncmp(inputs[i], "alt_src=", 8) == 0)){          z_src = atof(inputs[i] + 8);}
+        else if ((strncmp(inputs[i], "src_lat=", 8) == 0) || (strncmp(inputs[i], "lat_src=", 8) == 0)){     lat_src = atof(inputs[i] + 8);}
+        else if ((strncmp(inputs[i], "src_lon=", 8) == 0) || (strncmp(inputs[i], "lon_src=", 8) == 0)){     lon_src = atof(inputs[i] + 8);}
+
+        else if (strncmp(inputs[i], "src_attack=", 11) == 0){                                               src_attack = atof(inputs[i] + 11);}
+        else if (strncmp(inputs[i], "src_az=", 7) == 0){                                                    src_az = atof(inputs[i] + 7);}
+        else if (strncmp(inputs[i], "src_mach=", 9) == 0){                                                  src_M = atof(inputs[i] + 9);}
+        else if (strncmp(inputs[i], "cone_resol=", 11) == 0){                                               cone_resol = atof(inputs[i] + 11);}
+
+        else if (strncmp(inputs[i], "bounces=", 8) == 0){                                                   bounces = atoi(inputs[i] + 8);}
+                
+        else if (strncmp(inputs[i], "write_rays=", 11) == 0){                                               write_rays = string2bool(inputs[i] + 11);}
+        
+        else if (strncmp(inputs[i], "freq=", 5) == 0){                                                      freq = atof(inputs[i] + 5);}
+        else if (strncmp(inputs[i], "abs_coeff=", 10) == 0){                                                atmo::tweak_abs = max(0.0, atof(inputs[i] + 10));}
+        else if (strncmp(inputs[i], "calc_amp=", 9) == 0){                                                  geoac::calc_amp = string2bool(inputs[i] + 9);}
+        
+        else if ((strncmp(inputs[i], "max_alt=", 8) == 0) || (strncmp(inputs[i], "alt_max=", 8) == 0)){     geoac::alt_max = atof(inputs[i] + 8);   cout << '\t' << "User selected altitude maximum = " << geoac::alt_max << '\n';}
+        else if ((strncmp(inputs[i], "max_rng=", 8) == 0) || (strncmp(inputs[i], "rng_max=", 8) == 0)){     geoac::rng_max = atof(inputs[i] + 8);   cout << '\t' << "User selected range maximum = " << geoac::rng_max << '\n';}
+        else if ((strncmp(inputs[i], "max_time=", 9) == 0) || (strncmp(inputs[i], "time_max=", 9) == 0)){   geoac::time_max = atof(inputs[i] + 9);   cout << '\t' << "User selected propagation time maximum = " << geoac::time_max << '\n';}
+
+        else if ((strncmp(inputs[i], "min_lat=", 8) == 0) || (strncmp(inputs[i], "lat_min=", 8) == 0)){     geoac::lat_min = atof(inputs[i] + 8) * (Pi / 180.0);   cout << '\t' << "User selected latitude minimum = " << geoac::lat_min * (180.0 / Pi) << '\n';}
+        else if ((strncmp(inputs[i], "max_lat=", 8) == 0) || (strncmp(inputs[i], "lat_max=", 8) == 0)){     geoac::lat_max = atof(inputs[i] + 8) * (Pi / 180.0);   cout << '\t' << "User selected latitude maximum = " << geoac::lat_max * (180.0 / Pi) << '\n';}
+        else if ((strncmp(inputs[i], "min_lon=", 8) == 0) || (strncmp(inputs[i], "lon_min=", 8) == 0)){     geoac::lon_min = atof(inputs[i] + 8) * (Pi / 180.0);   cout << '\t' << "User selected longitude minimum = " << geoac::lon_min * (180.0 / Pi) << '\n';}
+        else if ((strncmp(inputs[i], "max_lon=", 8) == 0) || (strncmp(inputs[i], "lon_max=", 8) == 0)){     geoac::lon_max = atof(inputs[i] + 8) * (Pi / 180.0);   cout << '\t' << "User selected longitude maximum = " << geoac::lon_max * (180.0 / Pi) << '\n';}
+        
+        else if ((strncmp(inputs[i], "min_ds=", 7) == 0) || (strncmp(inputs[i], "ds_min=", 7) == 0)){       geoac::ds_min = atof(inputs[i] + 7);    cout << '\t' << "User selected ds minimum = " << geoac::ds_min << '\n';}
+        else if ((strncmp(inputs[i], "max_ds=", 7) == 0) || (strncmp(inputs[i], "ds_max=", 7) == 0)){       geoac::ds_max = atof(inputs[i] + 7);    cout << '\t' << "User selected ds maximum = " << geoac::ds_max << '\n';}
+        else if ((strncmp(inputs[i], "max_s=", 6) == 0) || (strncmp(inputs[i], "s_max=", 6) == 0)){         geoac::s_max = atof(inputs[i] + 6);     cout << '\t' << "User selected s maximum (path length between reflections) = " << geoac::s_max << '\n';}
+
+        else if (strncmp(inputs[i], "write_atmo=", 11) == 0){                                               write_atmo = string2bool(inputs[i] + 11);}
+        else if (strncmp(inputs[i], "prof_format=", 12) == 0){ 		                                        prof_format = inputs[i] + 12;}
+        else if (strncmp(inputs[i], "output_id=", 10) == 0){                                                custom_output_id = true; 
+                                                                                                            output_id = inputs[i] + 10;}
+        else if (strncmp(inputs[i], "z_grnd=", 7) == 0){                                                    if(!geoac::is_topo){
+                                                                                                                topo::z0 = atof(inputs[i] + 7);
+                                                                                                                topo::z_max = topo::z0;
+                                                                                                                topo::z_bndlyr = topo::z0 + 2.0;
+                                                                                                            } else {
+                                                                                                                cout << '\t' << "Note: cannot adjust ground elevation with topography." << '\n';
+                                                                                                            }}
+        else if (strncmp(inputs[i], "topo_file=",10) == 0){                                                 topo_file = inputs[i] + 10; geoac::is_topo=true;}
+        else if (strncmp(inputs[i], "topo_use_BLw=", 13) == 0){                                             topo::use_BLw = string2bool(inputs[i] + 13);}
+        else if (strncmp(inputs[i], "print_resid=", 12) == 0){                                              print_resid = string2bool(inputs[i] + 12);}
+        else{
+            cout << "***WARNING*** Unrecognized parameter entry: " << inputs[i] << '\n';
+            cout << "Continue? (y/n):"; cin >> input_check;
+            if(input_check!='y' && input_check!='Y') return;
+        }
+    }
+
+    if(src_M < 1.0){
+        cout << '\n' << "***WARNING*** Mach number must be greater than 1 for mach cone formation.  Skipping ray path calculations" << '\n' << '\n';
+        return;
+    }
+
+    lat_src *= Pi / 180.0;
+    lon_src *= Pi / 180.0;
+    
+    // Set the source height at topographical ground above sea level
+    z_src = max(z_src, topo::z(lat_src, lon_src) - globe::r0);
+    if(write_atmo)      geoac::write_prof("atmo.dat", lat_src, lon_src, 90.0 * Pi / 180.0);
+    geoac::configure();
+
+    cout << '\n' << "Parameter summary:" << '\n';
+    cout << '\t' << "source location (lat, lon, alt): " << lat_src * (180.0 / Pi) << ", " << lon_src * (180.0 / Pi) << ", " << z_src << '\n';
+    cout << '\t' << "source mach number: " << src_M << '\n';
+    cout << '\t' << "source attack and azimuth angles: " << src_attack << ", " << src_az << '\n';
+    cout << '\t' << "cone resolution: " << cone_resol << '\n';
+    cout << '\t' << "bounces: " << bounces << '\n';
+    if(!geoac::is_topo){
+        cout << '\t' << "ground elevation: " << topo::z0 << '\n';
+    }
+    cout << '\t' << "frequency: " << freq << '\n';
+    cout << '\t' << "S&B atten coeff: " << atmo::tweak_abs << '\n';
+    
+    if (write_atmo){        cout << '\t' << "write_atmo: true" << '\n';}        else { cout << '\t' << "write_atmo: false" << '\n';}
+    if (write_rays){        cout << '\t' << "write_rays: true" << '\n';}        else { cout << '\t' << "write_rays: false" << '\n';}
+    if (geoac::calc_amp){   cout << '\t' << "calc_amp: true" << '\n';}          else { cout << '\t' << "calc_amp: false" << '\n';}
+    cout << '\n';
+    
+    // Extract the file name from the input and use it to distinguish the resulting output
+    char output_buffer [512];
+    if(!custom_output_id){
+        output_id = inputs[2];
+    }
+       
+    // Define variables used for analysis
+	double D, D_prev, travel_time_sum, attenuation, r_max, inclination, GC1, GC2, back_az;
+	int k, length = int(geoac::s_max / geoac::ds_min);
+	bool break_check;
+	
+	ofstream results, raypath, caustics, topo_out;
+    
+    sprintf(output_buffer, "%s.arrivals.dat", output_id);
+    results.open(output_buffer);
+
+    results << "# infraga-sph-rngdep -prop summary:" << '\n';
+    results << "#" << '\t' << "profile: " << inputs[2] << '\n';
+    results << "#" << '\t' << "source location (lat, lon, alt): " << lat_src * (180.0 / Pi) << ", " << lon_src * (180.0 / Pi) << ", " << z_src << '\n';
+    results << "#" << '\t' << "source mach number: " << src_M << '\n';
+    results << "#" << '\t' << "attack and azimuth angles: " << src_attack << ", " << src_az << '\n';
+    results << "#" << '\t' << "cone resolution: " << cone_resol << '\n';
+    results << "#" << '\t' << "bounces: " << bounces << '\n';
+    if(!geoac::is_topo){
+        results << "#" << '\t' << "ground elevation: " << topo::z0 << '\n';
+    } else {
+        results << "#" << '\t' << "topo file:" << topo_file << '\n';
+    }
+    results << "#" << '\t' << "frequency: " << freq << '\n';
+    results << "#" << '\t' << "S&B atten coeff: " << atmo::tweak_abs << '\n' << '\n';
+
+    results << "# incl [deg]";
+    results << '\t' << "az [deg]";
+    results << '\t' << "n_b";
+    results << '\t' << "lat_0 [deg]";
+    results << '\t' << "lon_0 [deg]";
+    results << '\t' << "time [s]";
+    results << '\t' << "cel [km/s]";
+    results << '\t' << "turning ht [km]";
+    results << '\t' << "inclination [deg]";
+    results << '\t' << "back azimuth [deg]";
+    results << '\t' << "trans. coeff. [dB]";
+    results << '\t' << "absorption [dB]";
+    results << '\t' << "src lat [deg]";
+    results << '\t' << "src lon [deg]";
+    results << '\t' << "src alt [km]";
+    results << '\n';
+    
+	if(write_rays){
+        sprintf(output_buffer, "%s.raypaths.dat", output_id);
+        raypath.open(output_buffer);
+        
+        raypath << "# lat [deg]";
+        raypath << '\t' << "lon [deg]";
+        raypath << '\t' << "z [km]";
+        raypath << '\t' << "trans. coeff. [dB]";
+        raypath << '\t' << "absorption [dB]";
+        raypath << '\t' << "time [s]";
+        raypath << '\n';
+        
+    }
+    
+    src_attack = src_attack * (Pi / 180.0);
+    src_az = src_az * (Pi / 180.0);
+
+	double** solution;
+    geoac::build_solution(solution,length); 
+
+    for(double lambda = -Pi; lambda < Pi; lambda+=cone_resol * (Pi / 180.0)){
+        cout << "Calculating ray path: " << lambda * (180.0 / Pi) << " degrees cone angle." << '\n';
+
+        double cone_x = sqrt(1.0 - 1.0 / pow(src_M, 2)) * (cos(src_az) * sin(lambda) + sin(src_attack) * sin(src_az) * cos(lambda)) - (1.0 / src_M) * cos(src_attack) * sin(src_az);
+        double cone_y = sqrt(1.0 - 1.0 / pow(src_M, 2)) * (sin(src_az) * sin(lambda) - sin(src_attack) * cos(src_az) * cos(lambda)) + (1.0 / src_M) * cos(src_attack) * cos(src_az);
+        double cone_z = sqrt(1.0 - 1.0 / pow(src_M, 2)) * cos(src_attack) * cos(lambda) + (1.0 / src_M) * sin(src_attack);
+
+        geoac::theta = asin(cone_z);
+        geoac::phi = atan2(cone_y, -cone_x);
+        geoac::set_initial(solution, z_src, lat_src, lon_src);
+
+        travel_time_sum = 0.0;
+        attenuation = 0.0;
+        r_max = 0.0;
+        
+        for(int bnc_cnt = 0; bnc_cnt <= bounces; bnc_cnt++){
+            k = geoac::prop_rk4(solution, break_check, length);
+            if(print_resid){
+                cout << '\t' << "Residuals at Ray Termination (region boundary or reflection):" << '\n';
+                cout << '\t' << '\t' << "Eikonal residual: " << geoac::eval_eikonal(solution, k - 1) << '\n';
+                cout << '\t' << '\t' << "Aux. param. residual: " << geoac::eval_eikonal_deriv(solution, k - 1) << '\n';
+            }
+
+            if(write_rays){
+                for(int m = 1; m < k ; m++){
+                    geoac::travel_time(travel_time_sum, solution, m - 1,m);
+                    geoac::atten(attenuation, solution, m - 1, m, freq);
+                    
+                    if(write_rays && (m == 1 || m % 15 == 0)){
+                        raypath << setprecision(8) << solution[m][1] * (180.0 / Pi);
+                        raypath << '\t' << setprecision(8) << solution[m][2] * (180.0 / Pi);
+                        raypath << '\t' << solution[m][0] - globe::r0;
+                        if(geoac::calc_amp){
+                            raypath << '\t' << 20.0 * log10(geoac::amp(solution,m));
+                        } else {
+                            raypath << '\t' << 0.0;
+                        }
+                        raypath << '\t' << -2.0 * attenuation;
+                        raypath << '\t' << travel_time_sum << '\n';
+                    }
+                    
+                }
+            } else {
+                travel_time_sum += geoac::travel_time(solution, k);
+                attenuation += geoac::atten(solution, k, freq);
+            }
+
+            for(int m = 0; m < k ; m++){
+                r_max = max (r_max, solution[m][0] - globe::r0);
+            }
+
+            if(break_check || k < 2 || (travel_time_sum / 3600.0) > geoac::time_max){
+                break;
+            }
+    
+            inclination = asin(atmo::c(solution[k][0], solution[k][1], solution[k][2]) / atmo::c(globe::r0 + z_src, lat_src, lon_src) * solution[k][3]) * 180.0 / Pi;
+            back_az = 90.0 - atan2(-solution[k][4], -solution[k][5]) * 180.0 / Pi;
+            if(back_az < -180.0){
+                back_az += 360.0;
+            } else if(back_az > 180.0){
+                back_az -= 360.0;
+            } 
+            
+            results << geoac::theta * (180.0 / Pi);
+            results << '\t' << geoac::phi * (180.0 / Pi);
+            results << '\t' << bnc_cnt;
+            results << '\t' << setprecision(8) << solution[k][1] * (180.0 / Pi);
+            results << '\t' << setprecision(8) << solution[k][2] * (180.0 / Pi);
+            results << '\t' << travel_time_sum;
+            results << '\t' << globe::gc_dist(solution[k][1], solution[k][2], lat_src, lon_src) / travel_time_sum;
+            results << '\t' << r_max;
+            results << '\t' << inclination;
+            results << '\t' << back_az;
+            if(geoac::calc_amp){
+                results << '\t' << 20.0 * log10(geoac::amp(solution, k));
+            } else {
+                results << '\t' << 0.0;
+            }
+            results << '\t' << -2.0 * attenuation;
+            results << '\t' << lat_src * (180.0 / Pi);
+            results << '\t' << lon_src * (180.0 / Pi);
+            results << '\t' << z_src;
+            results << '\n';
+        
+            geoac::set_refl(solution,k);
+        }
+        if(write_rays){
+            raypath << '\n';
+        }
+        geoac::clear_solution(solution, k);
+    }
+	
+    results.close();
+    if(write_rays){
+        raypath.close();
+    }
+
+    geoac::delete_solution(solution, length);
+    clear_region();    
+}
+
 
 
 void run_region_test(char* inputs[], int count){
@@ -1886,6 +2211,7 @@ int main(int argc, char* argv[]){
         else if ((strncmp(argv[1], "-eig_search", 11) == 0) || (strncmp(argv[1], "-s", 2) == 0)){   run_eig_search(argv, argc);}
         else if ((strncmp(argv[1], "-eig_direct", 11) == 0) || (strncmp(argv[1], "-d", 2) == 0)){   run_eig_direct(argv, argc);}
         else if ((strncmp(argv[1], "-wnl_wvfrm", 10) == 0) || (strncmp(argv[1], "-w", 2) == 0)){    run_wnl_wvfrm(argv, argc);}
+        else if ((strncmp(argv[1], "-mach_cone", 10) == 0) || (strncmp(argv[1], "-m", 2) == 0)){    run_mach_cone(argv, argc);}
         else if (strncmp(argv[1], "-region_test", 12) == 0){                                        run_region_test(argv, argc);} // Development use only to evaluate interpolation
         else {                                                                                      cout << "Unrecognized option." << '\n';}
     }
